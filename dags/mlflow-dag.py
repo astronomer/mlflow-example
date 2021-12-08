@@ -17,20 +17,15 @@ import lightgbm as lgb
 
 
 docs = """
+MLFlow:
+Airflow can integrate with tools like MLFlow to streamline the model experimentation process. By using the automation and orchestration of Airflow together with MLflow's core concepts (Tracking, Projects, Models, and Registry) Data Scientists can standardize, share, and iterate over experiments more easily.
+
+
+XCOM Backend:
 By default, Airflow stores all return values in XCom. However, this can introduce complexity, as users then have to consider the size of data they are returning. Futhermore, since XComs are stored in the Airflow database by default, intermediary data is not easily accessible by external systems.
 By using an external XCom backend, users can easily push and pull all intermediary data generated in their DAG in GCS.
 """
 
-mlflow.set_tracking_uri('http://host.docker.internal:5000')
-try:
-    # Creating an experiment 
-    mlflow.create_experiment('census_prediction')
-except:
-    pass
-# Setting the environment with the created experiment
-mlflow.set_experiment('census_prediction')
-
-mlflow.lightgbm.autolog()
 
 @dag(
     start_date=datetime(2021, 1, 1),
@@ -139,6 +134,19 @@ def using_gcs_for_xcom_ds():
         validation_set = lgb.Dataset(X_val, label=y_val)
 
 
+
+        mlflow.set_tracking_uri('http://host.docker.internal:5000')
+        try:
+            # Creating an experiment 
+            mlflow.create_experiment('census_prediction')
+        except:
+            pass
+        # Setting the environment with the created experiment
+        mlflow.set_experiment('census_prediction')
+
+        mlflow.lightgbm.autolog()
+
+
         with mlflow.start_run(run_name='LGBM {{ run_id }}'):
             params = {'num_leaves': 31, 'objective': 'binary', 'metric': ['auc', 'binary_logloss']}
 
@@ -185,7 +193,6 @@ def using_gcs_for_xcom_ds():
             plt.close()
 
 
-
             # ROC Curve
             fpr, tpr, thresholds = roc_curve(y_val, y_pred_class)
             plt.plot(fpr,tpr)
@@ -196,6 +203,7 @@ def using_gcs_for_xcom_ds():
             plt.show()
             mlflow.log_artifact("roc_curve.png")
             plt.close()
+
 
 
     df = load_data()
