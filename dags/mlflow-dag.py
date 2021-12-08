@@ -163,11 +163,6 @@ def using_gcs_for_xcom_ds():
             y_pred = clf.predict(X_val)
             y_pred_class = np.where(y_pred > 0.5, 1, 0)
 
-            logging.info(type(y_pred_class))
-            logging.info(y_pred_class)
-
-
-
             # Classification Report
             cr = classification_report(y_val, y_pred_class, output_dict=True)
             logging.info(cr)
