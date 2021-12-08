@@ -21,7 +21,7 @@ class GCSXComBackend(BaseXCom):
                     bucket_name=GCSXComBackend.BUCKET_NAME,
                     object_name=object_name,
             ) as f:
-                value.to_csv(f.name)
+                value.to_csv(f.name, index=False)
             # Append prefix to persist information that the file
             # has to be downloaded from GCS
             value = GCSXComBackend.PREFIX + object_name

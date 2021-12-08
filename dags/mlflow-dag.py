@@ -2,16 +2,18 @@ from airflow.decorators import task, dag
 from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 
 from datetime import datetime
+
 import logging
+import mlflow
 from mlflow.tracking.fluent import log_metric
 
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import RepeatedStratifiedKFold
-from sklearn.model_selection import cross_val_score
-from lightgbm import LGBMClassifier
+import matplotlib.pyplot as plt
 
-import mlflow
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay, roc_curve
+import lightgbm as lgb
 
 
 docs = """
@@ -28,7 +30,7 @@ except:
 # Setting the environment with the created experiment
 mlflow.set_experiment('census_prediction')
 
-
+mlflow.lightgbm.autolog()
 
 @dag(
     start_date=datetime(2021, 1, 1),
@@ -117,7 +119,7 @@ def using_gcs_for_xcom_ds():
         return df
 
 
-    @task
+    @task()
     def cross_validation(df: pd.DataFrame):
         """Train and validate model
         
@@ -128,79 +130,83 @@ def using_gcs_for_xcom_ds():
         """
 
         
-        y = df['never_married'].values
-        X = df.drop(columns=['never_married']).values
+        y = df['never_married']
+        X = df.drop(columns=['never_married'])
 
 
-        with mlflow.start_run(run_name='LGBM'):
-
-            model = LGBMClassifier()
-            cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=3, random_state=1)
-            n_scores = cross_val_score(model, X, y, scoring='accuracy', cv=cv, n_jobs=-1, error_score='raise')
-            cv_mean = np.mean(n_scores)
-            cv_std = np.std(n_scores)
-            logging.info('Accuracy: %.3f (%.3f)' % (cv_mean, cv_std))
-
-            mlflow.log_metric('mean_cv_score_accuracy', cv_mean)
-            mlflow.log_metric('std_cv_score_accuracy', cv_std)
+        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=55)
+        train_set = lgb.Dataset(X_train, label=y_train)
+        validation_set = lgb.Dataset(X_val, label=y_val)
 
 
-            if cv_mean >= .8:
-                logging.info(f'CV mean accuracy is {cv_mean}. Building Model!')
-                y = df['never_married'].values
-                X = df.drop(columns=['never_married']).values
+        with mlflow.start_run(run_name='LGBM {{ run_id }}'):
+            params = {'num_leaves': 31, 'objective': 'binary', 'metric': ['auc', 'binary_logloss']}
 
-                model = LGBMClassifier()
-                model.fit(X, y)
-
-                mlflow.sklearn.log_model(model, 'census_prediction')
-
-            else:
-                logging.info(f'Training accuracy is {cv_mean}. Too low!')
-                return 'Training accuracy ({cv_mean}) too low.'
-
-        # return np.mean(n_scores)
-
-    # @task
-    # def fit(accuracy: float, ti=None): 
-    #     """Fit the final model
-        
-    #     Determines if accuracy meets predefined threshold to go ahead and fit model on full data set.
-
-    #     Returns lightgbm model as json via XCom to GCS bucket.
-        
-
-    #     Keyword arguments:
-    #     accuracy -- average accuracy score as determined by CV. 
-    #     """
-    #     if accuracy >= .8:
-
-    #         with mlflow.start_run(run_name='LGBM'):
-
-    #             # Reuse data produced by the feauture_engineering task by pulling from GCS bucket via XCom
-    #             df = ti.xcom_pull(task_ids='feature_engineering')
-
-    #             logging.info(f'Training accuracy is {accuracy}. Building Model!')
-    #             y = df['never_married'].values
-    #             X = df.drop(columns=['never_married']).values
+            lgb_cv = lgb.cv(params=params, train_set=train_set, num_boost_round=10, nfold=5)
+            logging.info(lgb_cv)
+            cv_metrics = {}
+            for k in lgb_cv:
+                for idx, val in enumerate(lgb_cv[k]):
+                    cv_metrics[f'cv_{k}_{idx}'] = val
+            mlflow.log_params(params)
+            mlflow.log_metrics(cv_metrics)
 
 
-    #             model = LGBMClassifier()
-    #             model.fit(X, y)
+            clf = lgb.train(
+                train_set=train_set,
+                valid_sets=[train_set, validation_set],
+                valid_names=['train', 'validation'],
+                params=params,
+                early_stopping_rounds=5
+            )
 
-    #             mlflow.sklearn.log_model(model, 'census_prediction')
-    #             # return model.booster_.dump_model()
+            y_pred = clf.predict(X_val)
+            y_pred_class = np.where(y_pred > 0.5, 1, 0)
 
-    #     else:
-    #         return 'Training accuracy ({accuracy}) too low.'
+            logging.info(type(y_pred_class))
+            logging.info(y_pred_class)
+
+
+
+            # Classification Report
+            cr = classification_report(y_val, y_pred_class, output_dict=True)
+            logging.info(cr)
+            cr_metrics = pd.json_normalize(cr, sep='_').to_dict(orient='records')[0]
+            mlflow.log_metrics(cr_metrics)
+
+
+            # Confustion Matrix
+            cm = confusion_matrix(y_val, y_pred_class)
+            t_n, f_p, f_n, t_p = cm.ravel()
+            mlflow.log_metric('True Positive', t_p)
+            mlflow.log_metric('True Negative', t_n)
+            mlflow.log_metric('False Positive', f_p)
+            mlflow.log_metric('False Negatives', f_n)
+
+            ConfusionMatrixDisplay.from_predictions(y_val, y_pred_class)
+            plt.savefig("confusion_matrix.png")
+            plt.show()
+            mlflow.log_artifact("confusion_matrix.png")
+            plt.close()
+
+
+
+            # ROC Curve
+            fpr, tpr, thresholds = roc_curve(y_val, y_pred_class)
+            plt.plot(fpr,tpr)
+            plt.ylabel('False Positive Rate')
+            plt.xlabel('True Positive Rate')
+            plt.title('ROC Curve')
+            plt.savefig("roc_curve.png")
+            plt.show()
+            mlflow.log_artifact("roc_curve.png")
+            plt.close()
 
 
     df = load_data()
     clean_data = preprocessing(df)
     features = feature_engineering(clean_data)
     cross_validation(features)
-    # accuracy = cross_validation(features)
-    # fit(accuracy)
 
     
 dag = using_gcs_for_xcom_ds()
