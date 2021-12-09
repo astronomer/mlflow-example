@@ -5,7 +5,6 @@ from datetime import datetime
 
 import logging
 import mlflow
-from mlflow.tracking.fluent import log_metric
 
 import pandas as pd
 import numpy as np
@@ -25,6 +24,50 @@ XCOM Backend:
 By default, Airflow stores all return values in XCom. However, this can introduce complexity, as users then have to consider the size of data they are returning. Futhermore, since XComs are stored in the Airflow database by default, intermediary data is not easily accessible by external systems.
 By using an external XCom backend, users can easily push and pull all intermediary data generated in their DAG in GCS.
 """
+
+
+
+def log_roc_curve(y_test: list, y_pred: list):
+    fpr, tpr, thresholds = roc_curve(y_test, y_pred)
+    plt.plot(fpr,tpr) 
+    plt.ylabel('False Positive Rate')
+    plt.xlabel('True Positive Rate')
+    plt.title('ROC Curve')
+    plt.savefig("roc_curve.png")
+    mlflow.log_artifact("roc_curve.png")
+    plt.close()
+
+
+def log_confusion_matrix(y_test: list, y_pred: list):
+    cm = confusion_matrix(y_test, y_pred)
+    t_n, f_p, f_n, t_p = cm.ravel()
+    mlflow.log_metrics({'True Positive': t_p, 'True Negative': t_n, 'False Positive': f_p, 'False Negatives': f_n})
+
+    ConfusionMatrixDisplay.from_predictions(y_test, y_pred)
+    plt.savefig("confusion_matrix.png")
+    mlflow.log_artifact("confusion_matrix.png")
+    plt.close()
+
+
+def log_classification_report(y_test: list, y_pred: list):
+    cr = classification_report(y_test, y_pred, output_dict=True)
+    logging.info(cr)
+    cr_metrics = pd.json_normalize(cr, sep='_').to_dict(orient='records')[0]
+    mlflow.log_metrics(cr_metrics)
+
+
+def log_all_eval_metrics(y_test: list, y_pred: list):
+    
+    # Classification Report
+    log_classification_report(y_test, y_test)
+
+
+    # Confustion Matrix
+    log_confusion_matrix(y_test, y_pred)
+
+
+    # ROC Curve
+    log_roc_curve(y_test, y_pred)
 
 
 @dag(
@@ -171,38 +214,9 @@ def using_gcs_for_xcom_ds():
             y_pred = clf.predict(X_val)
             y_pred_class = np.where(y_pred > 0.5, 1, 0)
 
-            # Classification Report
-            cr = classification_report(y_val, y_pred_class, output_dict=True)
-            logging.info(cr)
-            cr_metrics = pd.json_normalize(cr, sep='_').to_dict(orient='records')[0]
-            mlflow.log_metrics(cr_metrics)
+            # Log Classfication Report, Confustion Matrix, and ROC Curve
+            log_all_eval_metrics(y_val, y_pred_class)
 
-
-            # Confustion Matrix
-            cm = confusion_matrix(y_val, y_pred_class)
-            t_n, f_p, f_n, t_p = cm.ravel()
-            mlflow.log_metric('True Positive', t_p)
-            mlflow.log_metric('True Negative', t_n)
-            mlflow.log_metric('False Positive', f_p)
-            mlflow.log_metric('False Negatives', f_n)
-
-            ConfusionMatrixDisplay.from_predictions(y_val, y_pred_class)
-            plt.savefig("confusion_matrix.png")
-            plt.show()
-            mlflow.log_artifact("confusion_matrix.png")
-            plt.close()
-
-
-            # ROC Curve
-            fpr, tpr, thresholds = roc_curve(y_val, y_pred_class)
-            plt.plot(fpr,tpr)
-            plt.ylabel('False Positive Rate')
-            plt.xlabel('True Positive Rate')
-            plt.title('ROC Curve')
-            plt.savefig("roc_curve.png")
-            plt.show()
-            mlflow.log_artifact("roc_curve.png")
-            plt.close()
 
 
 
