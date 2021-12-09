@@ -25,8 +25,6 @@ By default, Airflow stores all return values in XCom. However, this can introduc
 By using an external XCom backend, users can easily push and pull all intermediary data generated in their DAG in GCS.
 """
 
-
-
 def log_roc_curve(y_test: list, y_pred: list):
     fpr, tpr, thresholds = roc_curve(y_test, y_pred)
     plt.plot(fpr,tpr) 
@@ -59,7 +57,7 @@ def log_classification_report(y_test: list, y_pred: list):
 def log_all_eval_metrics(y_test: list, y_pred: list):
     
     # Classification Report
-    log_classification_report(y_test, y_test)
+    log_classification_report(y_test, y_pred)
 
 
     # Confustion Matrix
@@ -216,7 +214,6 @@ def using_gcs_for_xcom_ds():
 
             # Log Classfication Report, Confustion Matrix, and ROC Curve
             log_all_eval_metrics(y_val, y_pred_class)
-
 
 
 
