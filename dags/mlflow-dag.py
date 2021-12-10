@@ -25,6 +25,7 @@ By default, Airflow stores all return values in XCom. However, this can introduc
 By using an external XCom backend, users can easily push and pull all intermediary data generated in their DAG in GCS.
 """
 
+
 def log_roc_curve(y_test: list, y_pred: list):
     fpr, tpr, thresholds = roc_curve(y_test, y_pred)
     plt.plot(fpr,tpr) 
@@ -155,8 +156,8 @@ def using_gcs_for_xcom_ds():
         return df
 
 
-    @task()
-    def cross_validation(df: pd.DataFrame):
+    @task.python()
+    def cross_validation(df: pd.DataFrame, **kwargs):
         """Train and validate model
         
         Returns accuracy score via XCom to GCS bucket.
@@ -188,7 +189,7 @@ def using_gcs_for_xcom_ds():
         mlflow.lightgbm.autolog()
 
 
-        with mlflow.start_run(run_name='LGBM {{ run_id }}'):
+        with mlflow.start_run(run_name=f'LGBM {kwargs["run_id"]}'):
             params = {'num_leaves': 31, 'objective': 'binary', 'metric': ['auc', 'binary_logloss']}
 
             lgb_cv = lgb.cv(params=params, train_set=train_set, num_boost_round=10, nfold=5)
