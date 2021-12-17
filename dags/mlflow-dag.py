@@ -9,8 +9,9 @@ import mlflow
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from sklearn import metrics
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay, roc_curve
 import lightgbm as lgb
 
@@ -157,7 +158,7 @@ def using_gcs_for_xcom_ds():
 
 
     @task.python()
-    def cross_validation(df: pd.DataFrame, **kwargs):
+    def grid_search_cv(df: pd.DataFrame, **kwargs):
         """Train and validate model
         
         Returns accuracy score via XCom to GCS bucket.
@@ -171,11 +172,24 @@ def using_gcs_for_xcom_ds():
         X = df.drop(columns=['never_married'])
 
 
-        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.2, random_state=55)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=55, stratify=y)
         train_set = lgb.Dataset(X_train, label=y_train)
-        validation_set = lgb.Dataset(X_val, label=y_val)
+        test_set = lgb.Dataset(X_test, label=y_test)
 
+        params = {'objective': 'binary', 'metric': ['auc', 'binary_logloss']}
 
+        grid_params = {
+            'learning_rate': [0.01, .05, .1], 
+            'n_estimators': [50, 100, 150],
+            'num_leaves': [31, 40, 80],
+            'max_depth': [16, 24, 31, 40],
+            'boosting_type': ['gbdt'], 
+            'objective': ['binary'],
+            'seed': [55],
+            }
+
+        model = lgb.LGBMClassifier(**params)
+        grid_search = GridSearchCV(model, param_grid=grid_params, verbose=1, cv=5, n_jobs=-1)
 
         mlflow.set_tracking_uri('http://host.docker.internal:5000')
         try:
@@ -186,42 +200,41 @@ def using_gcs_for_xcom_ds():
         # Setting the environment with the created experiment
         mlflow.set_experiment('census_prediction')
 
+        mlflow.sklearn.autolog()
         mlflow.lightgbm.autolog()
 
-
         with mlflow.start_run(run_name=f'LGBM {kwargs["run_id"]}'):
-            params = {'num_leaves': 31, 'objective': 'binary', 'metric': ['auc', 'binary_logloss']}
 
-            lgb_cv = lgb.cv(params=params, train_set=train_set, num_boost_round=10, nfold=5)
-            logging.info(lgb_cv)
-            cv_metrics = {}
-            for k in lgb_cv:
-                for idx, val in enumerate(lgb_cv[k]):
-                    cv_metrics[f'cv_{k}_{idx}'] = val
-            mlflow.log_params(params)
-            mlflow.log_metrics(cv_metrics)
+            logging.info('Performing Gridsearch')
+            grid_search.fit(X_train, y_train)
+
+            logging.info(f'Best Parameters\n{grid_search.best_params_}')
+            best_params = grid_search.best_params_
+            best_params['metric'] = ['auc', 'binary_logloss']
 
 
+            logging.info('Training model with best parameters')
             clf = lgb.train(
                 train_set=train_set,
-                valid_sets=[train_set, validation_set],
+                valid_sets=[train_set, test_set],
                 valid_names=['train', 'validation'],
-                params=params,
+                params=best_params,
                 early_stopping_rounds=5
             )
 
-            y_pred = clf.predict(X_val)
+            logging.info('Gathering Validation set results')
+            y_pred = clf.predict(X_test)
             y_pred_class = np.where(y_pred > 0.5, 1, 0)
 
             # Log Classfication Report, Confustion Matrix, and ROC Curve
-            log_all_eval_metrics(y_val, y_pred_class)
+            log_all_eval_metrics(y_test, y_pred_class)
 
 
 
     df = load_data()
     clean_data = preprocessing(df)
     features = feature_engineering(clean_data)
-    cross_validation(features)
+    grid_search_cv(features)
 
     
 dag = using_gcs_for_xcom_ds()
