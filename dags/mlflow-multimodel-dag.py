@@ -1,4 +1,5 @@
-from airflow.decorators import task, dag
+from airflow.decorators import task, dag, task_group
+from airflow.utils.task_group import TaskGroup
 from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 
 from datetime import datetime
@@ -9,10 +10,10 @@ import mlflow
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn import metrics
 
 from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay, roc_curve
+from sklearn.linear_model import LogisticRegression
 import lightgbm as lgb
 
 
@@ -62,7 +63,7 @@ def log_all_eval_metrics(y_test: list, y_pred: list):
     log_classification_report(y_test, y_pred)
 
 
-    # Confustion Matrix
+    # Confusion Matrix
     log_confusion_matrix(y_test, y_pred)
 
 
@@ -70,13 +71,22 @@ def log_all_eval_metrics(y_test: list, y_pred: list):
     log_roc_curve(y_test, y_pred)
 
 
+def test(clf, test_set, model_type):    
+    logging.info('Gathering Validation set results')
+    y_pred = clf.predict(test_set)
+
+    if model_type == 'lgbm':
+        return np.where(y_pred > 0.5, 1, 0)
+    else:
+        return y_pred
+
 @dag(
     start_date=datetime(2021, 1, 1),
     schedule_interval=None,
     catchup=False,
     doc_md=docs
 )
-def mlflow_example():
+def mlflow_multimodel_example():
 
     @task
     def load_data():
@@ -157,8 +167,8 @@ def mlflow_example():
         return df
 
 
-    @task.python()
-    def grid_search_cv(df: pd.DataFrame, **kwargs):
+    @task_group(group_id='grid_search_cv')
+    def grid_search_cv(features):
         """Train and validate model
         
         Returns accuracy score via XCom to GCS bucket.
@@ -167,69 +177,94 @@ def mlflow_example():
         df -- data from previous step pulled from BigQuery to be processed. 
         """
 
-        
-        y = df['never_married']
-        X = df.drop(columns=['never_married'])
-
-
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=55, stratify=y)
-        train_set = lgb.Dataset(X_train, label=y_train)
-        test_set = lgb.Dataset(X_test, label=y_test)
-
-        params = {'objective': 'binary', 'metric': ['auc', 'binary_logloss']}
-
-        grid_params = {
-            'learning_rate': [0.01, .05, .1], 
-            'n_estimators': [50, 100, 150],
-            'num_leaves': [31, 40, 80],
-            'max_depth': [16, 24, 31, 40],
-            'boosting_type': ['gbdt'], 
-            'objective': ['binary'],
-            'seed': [55],
+        model_grid_params = { 
+            'lgbm':{
+                'learning_rate': [0.01, .05, .1], 
+                'n_estimators': [50, 100, 150],
+                'num_leaves': [31, 40, 80],
+                'max_depth': [16, 24, 31, 40],
+                'boosting_type': ['gbdt'], 
+                'objective': ['binary'],
+                'seed': [55]
+                },
+            'log_reg':{
+                'penalty': ['l1','l2','elasticnet'],
+                'C': [0.001, 0.01, 0.1, 1, 10, 100],
+                'solver': ['newton-cg', 'lbfgs', 'liblinear', 'sag', 'saga']
+                }
             }
 
-        model = lgb.LGBMClassifier(**params)
-        grid_search = GridSearchCV(model, param_grid=grid_params, verbose=1, cv=5, n_jobs=-1)
 
-        mlflow.set_tracking_uri('http://host.docker.internal:5000')
-        try:
-            # Creating an experiment 
-            mlflow.create_experiment('census_prediction')
-        except:
-            pass
-        # Setting the environment with the created experiment
-        mlflow.set_experiment('census_prediction')
+        models = [
+            ['lgbm', lgb.LGBMClassifier(objective='binary', metric=['auc', 'binary_logloss'])],
+            ['log_reg', LogisticRegression(max_iter=500)]
+        ]
 
-        mlflow.sklearn.autolog()
-        mlflow.lightgbm.autolog()
+        tasks = []
 
-        with mlflow.start_run(run_name=f'LGBM {kwargs["run_id"]}'):
+        for model in models:
+            @task(task_id=model[0])
+            def train(df: pd.DataFrame, model_type=model[0],model=model[1], grid_params=model_grid_params[model[0]], **kwargs):
 
-            logging.info('Performing Gridsearch')
-            grid_search.fit(X_train, y_train)
-
-            logging.info(f'Best Parameters\n{grid_search.best_params_}')
-            best_params = grid_search.best_params_
-            best_params['metric'] = ['auc', 'binary_logloss']
+                y = df['never_married']
+                X = df.drop(columns=['never_married'])
 
 
-            logging.info('Training model with best parameters')
-            clf = lgb.train(
-                train_set=train_set,
-                valid_sets=[train_set, test_set],
-                valid_names=['train', 'validation'],
-                params=best_params,
-                early_stopping_rounds=5
-            )
+                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=55, stratify=y)
+                
+                mlflow.set_tracking_uri('http://host.docker.internal:5000')
+                try:
+                    # Creating an experiment 
+                    mlflow.create_experiment('census_prediction')
+                except:
+                    pass
+                # Setting the environment with the created experiment
+                mlflow.set_experiment('census_prediction')
 
-            logging.info('Gathering Validation set results')
-            y_pred = clf.predict(X_test)
-            y_pred_class = np.where(y_pred > 0.5, 1, 0)
-
-            # Log Classfication Report, Confustion Matrix, and ROC Curve
-            log_all_eval_metrics(y_test, y_pred_class)
+                grid_search = GridSearchCV(model, param_grid=grid_params, verbose=1, cv=5, n_jobs=-1)
 
 
+                mlflow.sklearn.autolog()
+
+                with mlflow.start_run(run_name=f'{model_type}_{kwargs["run_id"]}'):
+
+                    logging.info('Performing Gridsearch')
+                    grid_search.fit(X_train, y_train)
+
+                    logging.info(f'Best Parameters\n{grid_search.best_params_}')
+                    best_params = grid_search.best_params_
+
+
+                    if model_type == 'lgbm':
+
+                        mlflow.sklearn.autolog()
+
+                        train_set = lgb.Dataset(X_train, label=y_train)
+                        test_set = lgb.Dataset(X_test, label=y_test)
+
+                        best_params['metric'] = ['auc', 'binary_logloss']
+
+                        logging.info('Training model with best parameters')
+                        clf = lgb.train(
+                            train_set=train_set,
+                            valid_sets=[train_set, test_set],
+                            valid_names=['train', 'validation'],
+                            params=best_params,
+                            early_stopping_rounds=5
+                        )
+                        # mlflow.lightgbm.log_model(clf)
+                    else:
+                        logging.info('Training model with best parameters')
+                        clf = LogisticRegression(penalty=best_params['penalty'], C=best_params['C'], solver=best_params['solver']).fit(X_train, y_train)
+                        mlflow.sklearn.log_model(clf)
+
+                    y_pred_class = test(clf, X_test, model_type)
+
+                    # Log Classfication Report, Confustion Matrix, and ROC Curve
+                    log_all_eval_metrics(y_test, y_pred_class)
+
+            tasks.append(train(features))
+        return tasks
 
     df = load_data()
     clean_data = preprocessing(df)
@@ -237,4 +272,4 @@ def mlflow_example():
     grid_search_cv(features)
 
     
-dag = mlflow_example()
+dag = mlflow_multimodel_example()
