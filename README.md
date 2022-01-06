@@ -16,3 +16,17 @@ In an effort to keep the examples easy to follow, much of the data processing an
 2. `mlflow-multimodel-dag.py` - A simple DS pipeline from data extraction to modeling that leverages the Task Goup API to experiment with multiple models in parallel.
     - This DAG performs the same tasks as example #1 with some additions. 
     - Uses Task Groups to configure training multiple models with Grid Search in parallel.
+
+
+
+## Sample MLFlow Outputs
+
+### Runs
+
+
+### Plots
+
+
+### Metrics
+
+
