@@ -252,11 +252,10 @@ def mlflow_multimodel_example():
                             params=best_params,
                             early_stopping_rounds=5
                         )
-                        # mlflow.lightgbm.log_model(clf)
+                        
                     else:
                         logging.info('Training model with best parameters')
                         clf = LogisticRegression(penalty=best_params['penalty'], C=best_params['C'], solver=best_params['solver']).fit(X_train, y_train)
-                        mlflow.sklearn.log_model(clf)
 
                     y_pred_class = test(clf, X_test, model_type)
 
