@@ -20,7 +20,7 @@ params = {
         'learning_rate': [0.01, .05, .1], 
         'n_estimators': [50, 100, 150],
         'num_leaves': [31, 40, 80],
-        'max_depth': [16, 24, 31, 40],
+        'max_depth': [16, 24, 31, 40]
         },
     'log_reg':{
         'penalty': ['l1','l2','elasticnet'],
