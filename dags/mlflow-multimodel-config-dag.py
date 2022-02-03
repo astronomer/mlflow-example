@@ -1,5 +1,6 @@
 from airflow.decorators import task, dag, task_group
 from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
+from airflow.operators.python import get_current_context
 
 from datetime import datetime
 
@@ -12,8 +13,9 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.linear_model import LogisticRegression
 import lightgbm as lgb
 
-import include.metrics as metrics
+
 from include.grid_configs import models, params
+import include.metrics as metrics
 
 
 docs = """
@@ -38,13 +40,14 @@ mlflow.set_experiment('census_prediction')
 mlflow.sklearn.autolog()
 mlflow.lightgbm.autolog()
 
+
 @dag(
     start_date=datetime(2021, 1, 1),
     schedule_interval=None,
     catchup=False,
     doc_md=docs
 )
-def mlflow_multimodel_example():
+def mlflow_multimodel_config_example():
 
     @task
     def load_data():
@@ -83,12 +86,10 @@ def mlflow_multimodel_example():
         df['occupation'] = df['occupation'].apply(lambda x: 'Unknown' if x == '?' else x)
         df['native_country'] = df['native_country'].apply(lambda x: 'Unknown' if x == '?' else x)
 
-
         # Drop Extra/Unused Columns
         df.drop(columns=['education_num', 'relationship', 'functional_weight'], inplace=True)
 
         return df
-
 
     @task
     def feature_engineering(df: pd.DataFrame):
@@ -99,7 +100,6 @@ def mlflow_multimodel_example():
         Keyword arguments:
         df -- data from previous step pulled from BigQuery to be processed. 
         """
-
         
         # Onehot encoding 
         df = pd.get_dummies(df, prefix='workclass', columns=['workclass'])
@@ -110,14 +110,11 @@ def mlflow_multimodel_example():
         df = pd.get_dummies(df, prefix='income_bracket', columns=['income_bracket'])
         df = pd.get_dummies(df, prefix='native_country', columns=['native_country'])
 
-
         # Bin Ages
         df['age_bins'] = pd.cut(x=df['age'], bins=[16,29,39,49,59,100], labels=[1, 2, 3, 4, 5])
 
-
         # Dependent Variable
         df['never_married'] = df['marital_status'].apply(lambda x: 1 if x == 'Never-married' else 0) 
-
 
         # Drop redundant colulmn
         df.drop(columns=['income_bracket_<=50K', 'marital_status', 'age'], inplace=True)
@@ -140,6 +137,22 @@ def mlflow_multimodel_example():
         for k in models:
             @task(task_id=k)
             def train(df: pd.DataFrame, model_type=k,model=models[k], grid_params=params[k], **kwargs):
+ 
+                logging.info(f'Model: {model_type}')
+ 
+                context = get_current_context()
+                dag_run = context["dag_run"]
+                grid_search_config = dag_run.conf
+                logging.info(f'Current Context/Config: {grid_search_config}' )
+                
+                if bool(grid_search_config) and bool(grid_search_config[model_type]):
+                    logging.info('Configs provided at runtime will use those parameters for grid search')
+                    logging.info(grid_search_config[model_type])
+                    grid_params = grid_search_config[model_type]
+                else:
+                    logging.info('Configs not provided at runtime will use default parameters provided in model.py for grid search')
+                    logging.info(params[model_type])
+                    grid_params = params[model_type]
 
                 y = df['never_married']
                 X = df.drop(columns=['never_married'])
@@ -171,7 +184,7 @@ def mlflow_multimodel_example():
                             params=best_params,
                             early_stopping_rounds=5
                         )
-
+                        
                     else:
                         logging.info('Training model with best parameters')
                         clf = LogisticRegression(penalty=best_params['penalty'], C=best_params['C'], solver=best_params['solver']).fit(X_train, y_train)
@@ -182,7 +195,7 @@ def mlflow_multimodel_example():
                     metrics.log_all_eval_metrics(y_test, y_pred_class)
 
             tasks.append(train(features))
-            
+
         return tasks
 
 
@@ -192,4 +205,4 @@ def mlflow_multimodel_example():
     grid_search_cv(features)
 
     
-dag = mlflow_multimodel_example()
+dag = mlflow_multimodel_config_example()

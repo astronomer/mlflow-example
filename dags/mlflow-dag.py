@@ -3,71 +3,41 @@ from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 
 from datetime import datetime
 
+import lightgbm as lgb
+
 import logging
 import mlflow
 
-import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-
+import pandas as pd
 from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay, roc_curve
-import lightgbm as lgb
+
+import include.metrics as metrics
 
 
 docs = """
-MLFlow:
-Airflow can integrate with tools like MLFlow to streamline the model experimentation process. By using the automation and orchestration of Airflow together with MLflow's core concepts (Tracking, Projects, Models, and Registry) Data Scientists can standardize, share, and iterate over experiments more easily.
+### MLFlow
+Airflow can integrate with tools like MLFlow to streamline the model experimentation process. By using the automation and orchestration of Airflow together with MLflow's core concepts Data Scientists can standardize, share, and iterate over experiments more easily.
 
 
-XCOM Backend:
+#### XCOM Backend
 By default, Airflow stores all return values in XCom. However, this can introduce complexity, as users then have to consider the size of data they are returning. Futhermore, since XComs are stored in the Airflow database by default, intermediary data is not easily accessible by external systems.
 By using an external XCom backend, users can easily push and pull all intermediary data generated in their DAG in GCS.
 """
 
 
-def log_roc_curve(y_test: list, y_pred: list):
-    fpr, tpr, thresholds = roc_curve(y_test, y_pred)
-    plt.plot(fpr,tpr) 
-    plt.ylabel('False Positive Rate')
-    plt.xlabel('True Positive Rate')
-    plt.title('ROC Curve')
-    plt.savefig("roc_curve.png")
-    mlflow.log_artifact("roc_curve.png")
-    plt.close()
 
+mlflow.set_tracking_uri('http://host.docker.internal:5000')
+try:
+    # Creating an experiment 
+    mlflow.create_experiment('census_prediction')
+except:
+    pass
+# Setting the environment with the created experiment
+mlflow.set_experiment('census_prediction')
 
-def log_confusion_matrix(y_test: list, y_pred: list):
-    cm = confusion_matrix(y_test, y_pred)
-    t_n, f_p, f_n, t_p = cm.ravel()
-    mlflow.log_metrics({'True Positive': t_p, 'True Negative': t_n, 'False Positive': f_p, 'False Negatives': f_n})
-
-    ConfusionMatrixDisplay.from_predictions(y_test, y_pred)
-    plt.savefig("confusion_matrix.png")
-    mlflow.log_artifact("confusion_matrix.png")
-    plt.close()
-
-
-def log_classification_report(y_test: list, y_pred: list):
-    cr = classification_report(y_test, y_pred, output_dict=True)
-    logging.info(cr)
-    cr_metrics = pd.json_normalize(cr, sep='_').to_dict(orient='records')[0]
-    mlflow.log_metrics(cr_metrics)
-
-
-def log_all_eval_metrics(y_test: list, y_pred: list):
-    
-    # Classification Report
-    log_classification_report(y_test, y_pred)
-
-
-    # Confustion Matrix
-    log_confusion_matrix(y_test, y_pred)
-
-
-    # ROC Curve
-    log_roc_curve(y_test, y_pred)
-
+mlflow.sklearn.autolog()
+mlflow.lightgbm.autolog()
 
 @dag(
     start_date=datetime(2021, 1, 1),
@@ -89,7 +59,6 @@ def mlflow_example():
         return bq.get_pandas_df(sql=sql, dialect='standard')
 
 
-
     @task
     def preprocessing(df: pd.DataFrame):
         """Clean Data and prepare for feature engineering
@@ -109,17 +78,16 @@ def mlflow_example():
             if df.dtypes[col]=='object':
                 df[col] =df[col].apply(lambda x: x.rstrip().lstrip())
 
-
         # Rename up '?' values as 'Unknown'
         df['workclass'] = df['workclass'].apply(lambda x: 'Unknown' if x == '?' else x)
         df['occupation'] = df['occupation'].apply(lambda x: 'Unknown' if x == '?' else x)
         df['native_country'] = df['native_country'].apply(lambda x: 'Unknown' if x == '?' else x)
 
-
         # Drop Extra/Unused Columns
         df.drop(columns=['education_num', 'relationship', 'functional_weight'], inplace=True)
 
         return df
+
 
     @task
     def feature_engineering(df: pd.DataFrame):
@@ -131,7 +99,6 @@ def mlflow_example():
         df -- data from previous step pulled from BigQuery to be processed. 
         """
 
-        
         # Onehot encoding 
         df = pd.get_dummies(df, prefix='workclass', columns=['workclass'])
         df = pd.get_dummies(df, prefix='education', columns=['education'])
@@ -141,14 +108,11 @@ def mlflow_example():
         df = pd.get_dummies(df, prefix='income_bracket', columns=['income_bracket'])
         df = pd.get_dummies(df, prefix='native_country', columns=['native_country'])
 
-
         # Bin Ages
         df['age_bins'] = pd.cut(x=df['age'], bins=[16,29,39,49,59,100], labels=[1, 2, 3, 4, 5])
 
-
         # Dependent Variable
         df['never_married'] = df['marital_status'].apply(lambda x: 1 if x == 'Never-married' else 0) 
-
 
         # Drop redundant colulmn
         df.drop(columns=['income_bracket_<=50K', 'marital_status', 'age'], inplace=True)
@@ -158,18 +122,16 @@ def mlflow_example():
 
     @task.python()
     def grid_search_cv(df: pd.DataFrame, **kwargs):
-        """Train and validate model
+        """Train and validate model using a grid search for the optimal parameter values and a five fold cross validation.
         
         Returns accuracy score via XCom to GCS bucket.
 
         Keyword arguments:
         df -- data from previous step pulled from BigQuery to be processed. 
         """
-
         
         y = df['never_married']
         X = df.drop(columns=['never_married'])
-
 
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=55, stratify=y)
         train_set = lgb.Dataset(X_train, label=y_train)
@@ -181,26 +143,11 @@ def mlflow_example():
             'learning_rate': [0.01, .05, .1], 
             'n_estimators': [50, 100, 150],
             'num_leaves': [31, 40, 80],
-            'max_depth': [16, 24, 31, 40],
-            'boosting_type': ['gbdt'], 
-            'objective': ['binary'],
-            'seed': [55],
+            'max_depth': [16, 24, 31, 40]
             }
 
         model = lgb.LGBMClassifier(**params)
         grid_search = GridSearchCV(model, param_grid=grid_params, verbose=1, cv=5, n_jobs=-1)
-
-        mlflow.set_tracking_uri('http://host.docker.internal:5000')
-        try:
-            # Creating an experiment 
-            mlflow.create_experiment('census_prediction')
-        except:
-            pass
-        # Setting the environment with the created experiment
-        mlflow.set_experiment('census_prediction')
-
-        mlflow.sklearn.autolog()
-        mlflow.lightgbm.autolog()
 
         with mlflow.start_run(run_name=f'LGBM {kwargs["run_id"]}'):
 
@@ -222,12 +169,10 @@ def mlflow_example():
             )
 
             logging.info('Gathering Validation set results')
-            y_pred = clf.predict(X_test)
-            y_pred_class = np.where(y_pred > 0.5, 1, 0)
+            y_pred_class = metrics.test(clf, X_test)
 
-            # Log Classfication Report, Confustion Matrix, and ROC Curve
-            log_all_eval_metrics(y_test, y_pred_class)
-
+            # Log Classfication Report, Confusion Matrix, and ROC Curve
+            metrics.log_all_eval_metrics(y_test, y_pred_class)
 
 
     df = load_data()

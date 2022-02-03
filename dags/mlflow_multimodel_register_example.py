@@ -4,6 +4,7 @@ from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 from datetime import datetime
 
 import logging
+from airflow.utils.log.logging_mixin import LoggingMixin
 import mlflow
 
 import pandas as pd
@@ -26,6 +27,7 @@ By default, Airflow stores all return values in XCom. However, this can introduc
 By using an external XCom backend, users can easily push and pull all intermediary data generated in their DAG in GCS.
 """
 
+
 mlflow.set_tracking_uri('http://host.docker.internal:5000')
 try:
     # Creating an experiment 
@@ -44,7 +46,7 @@ mlflow.lightgbm.autolog()
     catchup=False,
     doc_md=docs
 )
-def mlflow_multimodel_example():
+def mlflow_multimodel_register_example():
 
     @task
     def load_data():
@@ -99,7 +101,6 @@ def mlflow_multimodel_example():
         Keyword arguments:
         df -- data from previous step pulled from BigQuery to be processed. 
         """
-
         
         # Onehot encoding 
         df = pd.get_dummies(df, prefix='workclass', columns=['workclass'])
@@ -110,14 +111,11 @@ def mlflow_multimodel_example():
         df = pd.get_dummies(df, prefix='income_bracket', columns=['income_bracket'])
         df = pd.get_dummies(df, prefix='native_country', columns=['native_country'])
 
-
         # Bin Ages
         df['age_bins'] = pd.cut(x=df['age'], bins=[16,29,39,49,59,100], labels=[1, 2, 3, 4, 5])
 
-
         # Dependent Variable
         df['never_married'] = df['marital_status'].apply(lambda x: 1 if x == 'Never-married' else 0) 
-
 
         # Drop redundant colulmn
         df.drop(columns=['income_bracket_<=50K', 'marital_status', 'age'], inplace=True)
@@ -138,7 +136,7 @@ def mlflow_multimodel_example():
         tasks = []
 
         for k in models:
-            @task(task_id=k)
+            @task(task_id=k, multiple_outputs=True)
             def train(df: pd.DataFrame, model_type=k,model=models[k], grid_params=params[k], **kwargs):
 
                 y = df['never_married']
@@ -148,7 +146,7 @@ def mlflow_multimodel_example():
 
                 grid_search = GridSearchCV(model, param_grid=grid_params, verbose=1, cv=5, n_jobs=-1)
 
-                with mlflow.start_run(run_name=f'{model_type}_{kwargs["run_id"]}'):
+                with mlflow.start_run(run_name=f'{model_type}_{kwargs["run_id"]}') as run:
 
                     logging.info('Performing Gridsearch')
                     grid_search.fit(X_train, y_train)
@@ -178,18 +176,130 @@ def mlflow_multimodel_example():
 
                     y_pred_class = metrics.test(clf, X_test)
 
-                    # Log Classfication Report, Confusion Matrix, and ROC Curve
+                    # Log Classfication Report, Confustion Matrix, and ROC Curve
                     metrics.log_all_eval_metrics(y_test, y_pred_class)
 
-            tasks.append(train(features))
-            
+                    return {'run_id': run.info.run_id, 'model_type': model_type}
+                
+            run_id = train(features)
+            tasks.append(run_id)
+
         return tasks
+
+
+    @task(multiple_outputs=True)
+    def get_best_model(run_ids: list):
+
+        logging.info(run_ids)
+
+        best = {
+            'run_id': '',
+            'model': '',
+            'auc_score': 0,
+            'accuracy': 0
+        }
+        
+        for run_id in run_ids:
+
+            logging.info(run_id['run_id'])
+
+            run_data = mlflow.get_run(run_id['run_id']).data.to_dictionary()
+            auc_score = run_data['metrics']['test_auc_score']
+            accuracy = run_data['metrics']['accuracy']
+
+            logging.info(f'AUC Score: {auc_score}')
+            logging.info(f'Accuracy: {accuracy}')
+
+            if auc_score > best['auc_score']:
+                best['auc_score'] = auc_score
+                best['accuracy'] = accuracy
+                best['run_id'] = run_id['run_id']
+                best['model'] = run_id['model_type']
+            elif auc_score == best['auc_score'] and accuracy > best['accuracy']:
+                best['auc_score'] = auc_score
+                best['accuracy'] = accuracy
+                best['run_id'] = run_id['run_id']
+                best['model'] = run_id['model_type']
+            else:
+                pass
+        
+        logging.info(best)
+
+        best_params = {}
+        best_run = mlflow.get_run(best['run_id']).data.to_dictionary()
+        best_run = best_run['params']
+
+        for k in best_run:
+            if k.startswith('best_'):
+
+                if '.' in best_run[k]:
+                    best_params[k[len('best_'):]] = float(best_run[k])
+                elif best_run[k].isdigit():
+                    best_params[k[len('best_'):]] = int(best_run[k])
+                else:
+                    best_params[k[len('best_'):]] = best_run[k]
+
+
+        logging.info(best_params)
+
+        return {'params': best_params, 'model_type': best['model']}
+
+
+    @task
+    def build_best_model(model_params: dict, features: pd.DataFrame, **kwargs):
+        
+        logging.info(model_params)
+
+        y = features['never_married']
+        X = features.drop(columns=['never_married'])
+
+        train_set = lgb.Dataset(X, label=y)
+
+        with mlflow.start_run(run_name=f'{model_params["model_type"]}_{kwargs["run_id"]}_best') as run:
+
+            if model_params['model_type'] == 'lgbm':
+                
+                base_params = {'objective':'binary', 'metric':['auc', 'binary_logloss'], 'boosting_type':'gbdt'}
+                all_params = {**base_params, **model_params['params']}
+
+                lgb.train(
+                    train_set=train_set,
+                    params=all_params
+                )
+
+            else:
+                base_params = {'max_iter': 500}
+                all_params = {**base_params, **model_params['params']}
+
+                LogisticRegression(params=all_params)  
+        
+            return run.info.run_id
+
+
+    @task
+    def register_model(model_run_id: str):
+        
+        mv = mlflow.register_model(f'runs:/{model_run_id}/model', 'census_pred',)
+
+        logging.info(f'Name: {mv.name}')
+        logging.info(f'Version: {mv.version}')
+
+        client = mlflow.tracking.MlflowClient()
+
+        client.transition_model_version_stage(
+            name=mv.name,
+            version=mv.version,
+            stage="Staging")
+
 
 
     df = load_data()
     clean_data = preprocessing(df)
     features = feature_engineering(clean_data)
-    grid_search_cv(features)
+    run_ids = grid_search_cv(features)
+    best_model_params = get_best_model(run_ids)
+    final_model_run_id = build_best_model(best_model_params, features)
+    register_model(final_model_run_id)
 
     
-dag = mlflow_multimodel_example()
+dag = mlflow_multimodel_register_example()

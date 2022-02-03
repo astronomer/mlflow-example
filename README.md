@@ -2,7 +2,7 @@
 
 These examples are meant to be a guide/skaffold for Data Science and Machine Learning pipelines that can be implemented in Airflow with MLflow integration.
 
-In an effort to keep the examples easy to follow, much of the data processing and modeling code has intentially been kept simple.
+In an effort to keep the examples easy to follow, much of the data processing and modeling code has intentionally been kept simple.
 
 ## Examples
 
@@ -17,6 +17,30 @@ In an effort to keep the examples easy to follow, much of the data processing an
     - This DAG performs the same tasks as example #1 with some additions. 
     - Uses Task Groups to configure training multiple models with Grid Search in parallel.
 
+3. `mlflow-multimodel-config-dag.py` - A simple DS pipeline from data extraction to modeling that leverages the Task Goup API to experiment with multiple models in parallel.
+    - This DAG performs the same tasks as example #2 with the addition passing optional grid parameters at runtime to the DAG for various models. 
+
+
+4. `mlflow-multimodel-register-dag.py` - A simple DS pipeline from data extraction to modeling publication that leverages the Task Goup API to experiment with multiple models in parallel.
+    - This DAG performs the same tasks as example #2 with some additions. 
+    - Selects the best performing model and paremetesrs then fits a final model on the full dataset for publication to the MLflow Model Registry.
+    - Sample runtime configs to pass that will override default parameters provided in `models.py`.
+
+        ```
+        {
+            "lgbm":{
+                "learning_rate": [0.01, 0.05, 0.1], 
+                "n_estimators": [50, 100],
+                "num_leaves": [31, 40],
+                "max_depth": [16, 24, 31]
+            },
+            "log_reg":{
+                "penalty": ["l1","l2","elasticnet"],
+                "C": [0.001, 0.01, 0.1, 1, 10],
+                "solver": ["newton-cg", "lbfgs", "liblinear"]
+            }
+        }
+        ```
 
 
 ## Sample MLFlow Outputs
