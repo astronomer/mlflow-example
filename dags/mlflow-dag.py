@@ -114,7 +114,7 @@ def mlflow_example():
         # Dependent Variable
         df['never_married'] = df['marital_status'].apply(lambda x: 1 if x == 'Never-married' else 0) 
 
-        # Drop redundant colulmn
+        # Drop redundant column
         df.drop(columns=['income_bracket_<=50K', 'marital_status', 'age'], inplace=True)
 
         return df

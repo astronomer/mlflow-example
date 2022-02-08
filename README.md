@@ -18,12 +18,12 @@ In an effort to keep the examples easy to follow, much of the data processing an
     - Uses Task Groups to configure training multiple models with Grid Search in parallel.
 
 3. `mlflow-multimodel-config-dag.py` - A simple DS pipeline from data extraction to modeling that leverages the Task Goup API to experiment with multiple models in parallel.
-    - This DAG performs the same tasks as example #2 with the addition passing optional grid parameters at runtime to the DAG for various models. 
+    - This DAG performs the same tasks as example #2 with the addition of passing optional grid parameters at runtime to the DAG for various models. 
 
 
 4. `mlflow-multimodel-register-dag.py` - A simple DS pipeline from data extraction to modeling publication that leverages the Task Goup API to experiment with multiple models in parallel.
     - This DAG performs the same tasks as example #2 with some additions. 
-    - Selects the best performing model and paremetesrs then fits a final model on the full dataset for publication to the MLflow Model Registry.
+    - Selects the best performing model and parameters then fits a final model on the full dataset for publication to the MLflow Model Registry.
     - Sample runtime configs to pass that will override default parameters provided in `models.py`.
 
         ```
