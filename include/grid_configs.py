@@ -4,12 +4,6 @@ import lightgbm as lgb
 
 
 
-# models = [
-#     ['lgbm', lgb.LGBMClassifier(objective='binary', metric=['auc', 'binary_logloss'], seed=55, boosting_type='gbdt')],
-#     ['log_reg', LogisticRegression(max_iter=500)]
-# ]
-
-
 models = {
     'lgbm': lgb.LGBMClassifier(objective='binary', metric=['auc', 'binary_logloss'], seed=55, boosting_type='gbdt'),
     'log_reg': LogisticRegression(max_iter=500)
