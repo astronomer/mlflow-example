@@ -176,7 +176,7 @@ def mlflow_multimodel_config_example():
 
                         best_params['metric'] = ['auc', 'binary_logloss']
 
-                        logging.info('Training model with best parameters')
+                        logging.info(f'Training {model_type} model with best parameters')
                         clf = lgb.train(
                             train_set=train_set,
                             valid_sets=[train_set, test_set],
