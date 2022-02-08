@@ -186,7 +186,7 @@ def mlflow_multimodel_config_example():
                         )
                         
                     else:
-                        logging.info('Training model with best parameters')
+                        logging.info(f'Training {model_type} model with best parameters')
                         clf = LogisticRegression(penalty=best_params['penalty'], C=best_params['C'], solver=best_params['solver']).fit(X_train, y_train)
 
                     y_pred_class = metrics.test(clf, X_test)
