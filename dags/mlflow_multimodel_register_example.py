@@ -1,3 +1,13 @@
+"""
+### MLFlow
+Airflow can integrate with tools like MLFlow to streamline the model experimentation process. By using the automation and orchestration of Airflow together with MLflow's core concepts Data Scientists can standardize, share, and iterate over experiments more easily.
+
+
+#### XCOM Backend
+By default, Airflow stores all return values in XCom. However, this can introduce complexity, as users then have to consider the size of data they are returning. Futhermore, since XComs are stored in the Airflow database by default, intermediary data is not easily accessible by external systems.
+By using an external XCom backend, users can easily push and pull all intermediary data generated in their DAG in GCS.
+"""
+
 from airflow.decorators import task, dag, task_group
 from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 
@@ -17,17 +27,6 @@ import include.metrics as metrics
 from include.grid_configs import models, params
 
 
-docs = """
-### MLFlow
-Airflow can integrate with tools like MLFlow to streamline the model experimentation process. By using the automation and orchestration of Airflow together with MLflow's core concepts Data Scientists can standardize, share, and iterate over experiments more easily.
-
-
-#### XCOM Backend
-By default, Airflow stores all return values in XCom. However, this can introduce complexity, as users then have to consider the size of data they are returning. Futhermore, since XComs are stored in the Airflow database by default, intermediary data is not easily accessible by external systems.
-By using an external XCom backend, users can easily push and pull all intermediary data generated in their DAG in GCS.
-"""
-
-
 mlflow.set_tracking_uri('http://host.docker.internal:5000')
 try:
     # Creating an experiment 
@@ -44,7 +43,7 @@ mlflow.lightgbm.autolog()
     start_date=datetime(2021, 1, 1),
     schedule_interval=None,
     catchup=False,
-    doc_md=docs
+    doc_md=__doc__
 )
 def mlflow_multimodel_register_example():
 
