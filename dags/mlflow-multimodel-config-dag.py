@@ -15,7 +15,6 @@ from airflow.operators.python import get_current_context
 from datetime import datetime
 
 import logging
-import mlflow
 
 import pandas as pd
 
@@ -28,17 +27,7 @@ from include.grid_configs import models, params
 import include.metrics as metrics
 
 
-mlflow.set_tracking_uri('http://host.docker.internal:5000')
-try:
-    # Creating an experiment 
-    mlflow.create_experiment('census_prediction')
-except:
-    pass
-# Setting the environment with the created experiment
-mlflow.set_experiment('census_prediction')
 
-mlflow.sklearn.autolog()
-mlflow.lightgbm.autolog()
 
 
 @dag(
@@ -137,7 +126,21 @@ def mlflow_multimodel_config_example():
         for k in models:
             @task(task_id=k)
             def train(df: pd.DataFrame, model_type=k,model=models[k], grid_params=params[k], **kwargs):
- 
+
+                import mlflow
+
+                mlflow.set_tracking_uri('http://host.docker.internal:5000')
+                try:
+                    # Creating an experiment
+                    mlflow.create_experiment('census_prediction')
+                except:
+                    pass
+                # Setting the environment with the created experiment
+                mlflow.set_experiment('census_prediction')
+
+                mlflow.sklearn.autolog()
+                mlflow.lightgbm.autolog()
+
                 logging.info(f'Model: {model_type}')
  
                 context = get_current_context()
