@@ -1,6 +1,7 @@
 
 # These categories will be applied to all DAGs in the repo.
 categories:
+  - AI + Machine Learning
   - ETL/ELT
 # List of DAGs that should be published to the Astronomer Registry.
 dags:
