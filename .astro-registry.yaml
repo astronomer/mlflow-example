@@ -1,0 +1,11 @@
+
+# These categories will be applied to all DAGs in the repo.
+categories:
+  - AI + Machine Learning
+  - ETL/ELT
+# List of DAGs that should be published to the Astronomer Registry.
+dags:
+  - path: dags/mlflow_multimodel_register_example.py
+  - path: dags/mlflow-dag.py
+  - path: dags/mlflow-multimodel-config-dag.py
+  - path: dags/mlflow-multimodel-dag.py
