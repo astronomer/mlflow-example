@@ -16,7 +16,6 @@ from datetime import datetime
 import lightgbm as lgb
 
 import logging
-import mlflow
 
 import numpy as np
 import pandas as pd
@@ -24,18 +23,6 @@ from sklearn.model_selection import train_test_split, GridSearchCV
 
 import include.metrics as metrics
 
-
-mlflow.set_tracking_uri('http://host.docker.internal:5000')
-try:
-    # Creating an experiment 
-    mlflow.create_experiment('census_prediction')
-except:
-    pass
-# Setting the environment with the created experiment
-mlflow.set_experiment('census_prediction')
-
-mlflow.sklearn.autolog()
-mlflow.lightgbm.autolog()
 
 @dag(
     start_date=datetime(2021, 1, 1),
@@ -127,7 +114,21 @@ def mlflow_example():
         Keyword arguments:
         df -- data from previous step pulled from BigQuery to be processed. 
         """
-        
+
+        import mlflow
+
+        mlflow.set_tracking_uri('http://host.docker.internal:5000')
+        try:
+            # Creating an experiment
+            mlflow.create_experiment('census_prediction')
+        except:
+            pass
+        # Setting the environment with the created experiment
+        mlflow.set_experiment('census_prediction')
+
+        mlflow.sklearn.autolog()
+        mlflow.lightgbm.autolog()
+
         y = df['never_married']
         X = df.drop(columns=['never_married'])
 

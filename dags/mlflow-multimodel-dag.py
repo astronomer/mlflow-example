@@ -14,7 +14,6 @@ from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 from datetime import datetime
 
 import logging
-import mlflow
 
 import pandas as pd
 
@@ -25,18 +24,6 @@ import lightgbm as lgb
 import include.metrics as metrics
 from include.grid_configs import models, params
 
-
-mlflow.set_tracking_uri('http://host.docker.internal:5000')
-try:
-    # Creating an experiment 
-    mlflow.create_experiment('census_prediction')
-except:
-    pass
-# Setting the environment with the created experiment
-mlflow.set_experiment('census_prediction')
-
-mlflow.sklearn.autolog()
-mlflow.lightgbm.autolog()
 
 @dag(
     start_date=datetime(2021, 1, 1),
@@ -140,6 +127,20 @@ def mlflow_multimodel_example():
         for k in models:
             @task(task_id=k)
             def train(df: pd.DataFrame, model_type=k,model=models[k], grid_params=params[k], **kwargs):
+
+                import mlflow
+
+                mlflow.set_tracking_uri('http://host.docker.internal:5000')
+                try:
+                    # Creating an experiment
+                    mlflow.create_experiment('census_prediction')
+                except:
+                    pass
+                # Setting the environment with the created experiment
+                mlflow.set_experiment('census_prediction')
+
+                mlflow.sklearn.autolog()
+                mlflow.lightgbm.autolog()
 
                 y = df['never_married']
                 X = df.drop(columns=['never_married'])
