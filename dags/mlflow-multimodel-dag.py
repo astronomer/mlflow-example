@@ -1,5 +1,9 @@
 """
-### MLFlow
+### Training Multiple Models with MLFlow
+Trains a logistic regression and lgbtm models and picks the best one.
+
+This DAG shows how to ingestion, feature engineeirng, train a set of models, and register the experiment with MLFlow. 
+
 Airflow can integrate with tools like MLFlow to streamline the model experimentation process. By using the automation and orchestration of Airflow together with MLflow's core concepts Data Scientists can standardize, share, and iterate over experiments more easily.
 
 

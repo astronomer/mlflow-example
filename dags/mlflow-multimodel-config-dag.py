@@ -1,5 +1,9 @@
 """
-### MLFlow
+### MultiModel config with MLFlow
+Evaluates runtime configurations to evaluate a Model stored in MLFlow.
+
+Uses a publicly avaliable Census dataset in Bigquery. 
+
 Airflow can integrate with tools like MLFlow to streamline the model experimentation process. By using the automation and orchestration of Airflow together with MLflow's core concepts Data Scientists can standardize, share, and iterate over experiments more easily.
 
 
