@@ -1,5 +1,5 @@
 """
-### MultiModel config with MLFlow
+### Multimodel config with MLFlow
 Evaluates runtime configurations to evaluate a Model stored in MLFlow.
 
 Uses a publicly avaliable Census dataset in Bigquery. 
